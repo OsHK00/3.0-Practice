@@ -1,0 +1,25 @@
+# --- Archivo local de configuración de la ruta del juego (NO subir) ---
+.env
+
+# --- Resultados de build ---
+[Bb]in/
+[Oo]bj/
+*.pdb
+*.dll
+*.suo
+*.user
+*.userprefs
+*.userosscache
+
+# --- Visual Studio ---
+.vs/
+.vscode/
+*.sln.docstates
+_ReSharper*/
+*.DotSettings.user
+
+# --- Varios ---
+*.log
+Thumbs.db
+Desktop.ini
+.DS_Store
