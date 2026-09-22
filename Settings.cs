@@ -11,6 +11,8 @@ namespace Practice_3_0
         public bool RestartOnDeath = false;
         public bool ResetCarefreeOnPlatReset = false;
         public bool ShowCarefreeChance = false;
+        public bool FullSoulOnPlatReset = false;
+        public bool ShowPlatHitsOnReset = true;
         public string ResetToPlatsKey = "";
     }
 }

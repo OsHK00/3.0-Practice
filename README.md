@@ -10,6 +10,8 @@ A small mod for that adds practice tools for practice anyrad3.0
 - Option to remove phase-2 portals
 - Show your current Carefree Melody proc chance
 - increase the speed of the swords
+- Start plats with full soul
+- Show hit count (X/10) on plat reset
 
 ## Requirements
 

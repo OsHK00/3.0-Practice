@@ -367,7 +367,23 @@ namespace Practice_3_0
         internal IEnumerator ResetToPlats()
         {
             CarefreeInjection.SetMax();
+            CapturePlatsHits();
             yield return ResetToPhase1();
+        }
+
+        private static void CapturePlatsHits()
+        {
+            if (!PracticeMod.Settings.ShowPlatHitsOnReset) return;
+            if (GetCurrentPhase() != 2) return;
+
+            GameObject boss = GameObject.Find("Absolute Radiance");
+            if (boss == null) return;
+            HealthManager hm = boss.GetComponent<HealthManager>();
+            if (hm == null) return;
+
+            // Phase 2 boss has 500 hp and each nail hit deals 50 -> 10 hits total.
+            int hits = Mathf.Max(0, (500 - hm.hp) / 50);
+            PlatsHitsDisplay.Show(Mathf.Min(hits, 10), 10);
         }
 
         internal static byte GetCurrentPhase()
@@ -619,7 +635,19 @@ namespace Practice_3_0
             HeroController hc = HeroController.instance;
             hc.ClearMPSendEvents();
             hc.MaxHealth();
-            hc.SetMPCharge(0);
+            if (PracticeMod.Settings.FullSoulOnPlatReset)
+            {
+                PlayerData pd = PlayerData.instance;
+                pd.soulLimited = false;
+                pd.maxMP = 99;
+                pd.MPCharge = 99;
+                pd.MPReserve = Mathf.Min(pd.MPReserveMax, pd.MPReserveCap);
+                hc.SetMPCharge(99);
+            }
+            else
+            {
+                hc.SetMPCharge(0);
+            }
             hc.AcceptInput();
 
             // Back to the spot where we started p1 

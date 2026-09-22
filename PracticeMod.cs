@@ -229,6 +229,22 @@ namespace Practice_3_0
                     Saver = i => Settings.ShowCarefreeChance = i == 0,
                     Loader = () => Settings.ShowCarefreeChance ? 0 : 1,
                 },
+                new IMenuMod.MenuEntry
+                {
+                    Name = "Full soul on plat reset",
+                    Description = "starts the new plat attempt with full soul",
+                    Values = new[] { "On", "Off" },
+                    Saver = i => Settings.FullSoulOnPlatReset = i == 0,
+                    Loader = () => Settings.FullSoulOnPlatReset ? 0 : 1,
+                },
+                new IMenuMod.MenuEntry
+                {
+                    Name = "Show plat hits on reset",
+                    Description = "shows the hits dealt (X/10) when the plats reset",
+                    Values = new[] { "On", "Off" },
+                    Saver = i => Settings.ShowPlatHitsOnReset = i == 0,
+                    Loader = () => Settings.ShowPlatHitsOnReset ? 0 : 1,
+                },
             };
         }
 
@@ -358,6 +374,7 @@ namespace Practice_3_0
 
             EnsureComponent();
             CarefreeDisplay.Create();
+            PlatsHitsDisplay.Create();
         }
 
         private static void EnsureComponent()
