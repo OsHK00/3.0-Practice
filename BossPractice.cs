@@ -156,6 +156,7 @@ namespace Practice_3_0
         private readonly Dictionary<int, bool> _swordWaiting = new Dictionary<int, bool>();
         private Vector3 _a1PitPos;
         private bool _a1PitPosCached;
+        private const int MaxResetRetries = 3;
         private float _portalCheck;
         private Vector3 _a1HeroPos;
         private bool _a1HeroFacingRight = true;
@@ -296,23 +297,52 @@ namespace Practice_3_0
             for (int i = 0; i < 600; i++)
             {
                 GameObject candidate = GameObject.Find("Absolute Radiance");
-                if (candidate != null && candidate.GetComponent(BossRef.RadianceType) != null)
+                if (candidate != null)
                 {
                     boss = candidate;
                     break;
                 }
                 yield return null;
             }
-            if (boss == null) yield break;
+            if (boss == null)
+            {
+                PracticeMod.Critical("Absolute Radiance not found after GG_Radiance load");
+                yield break;
+            }
 
             MonoBehaviour radiance = boss.GetComponent(BossRef.RadianceType) as MonoBehaviour;
-            if (radiance == null) yield break;
+            if (radiance == null)
+            {
+                // Give AnyRadiance's own RadianceFinder a moment to apply the mod
+                // before re-adding the component ourselves, to avoid duplicates.
+                for (int grace = 0; grace < 60 && radiance == null; grace++)
+                {
+                    radiance = boss.GetComponent(BossRef.RadianceType) as MonoBehaviour;
+                    yield return null;
+                }
+            }
+
+            if (radiance == null)
+            {
+                PracticeMod.Critical("AnyRadiance NOT applied on player, re-adding Radiance component manually");
+                boss.AddComponent(BossRef.RadianceType);
+                radiance = boss.GetComponent(BossRef.RadianceType) as MonoBehaviour;
+                if (radiance == null)
+                {
+                    PracticeMod.Critical("Could not re-add Radiance component to Absolute Radiance");
+                    yield break;
+                }
+            }
 
             float waited = 0;
             while (waited < 2f && BossRef.GetLogic() == null)
             {
                 waited += Time.unscaledDeltaTime;
                 yield return null;
+            }
+            if (BossRef.GetLogic() == null)
+            {
+                PracticeMod.Critical("Radiance logic never started");
             }
 
             CachePhase1Snapshot();
@@ -368,6 +398,7 @@ namespace Practice_3_0
         {
             CarefreeInjection.SetMax();
             CapturePlatsHits();
+            PracticeMod.Instance?.Log("[3.0 Practice][Reset] plat reset triggered (phase=" + GetCurrentPhase() + ")");
             yield return ResetToPhase1();
         }
 
@@ -396,7 +427,7 @@ namespace Practice_3_0
             return BossRef.GetPhase(radiance);
         }
 
-        private bool TryResetToPhase1(GameObject boss, MonoBehaviour radiance)
+        private bool TryResetToPhase1(GameObject boss, MonoBehaviour radiance, int attempt)
         {
             try
             {
@@ -418,31 +449,49 @@ namespace Practice_3_0
                 RestoreArenaToPhase1();
                 RestoreHeroToA1();
 
-                if (BossRef.Phase1Death == null)
-                {
-                    LoadBossInLoop();
-                    return false;
-                }
-
                 // Rerun the boss own p1 death sequence, which puts it back on the
                 // ground plat and sets up the whole arena again
                 object iterator = BossRef.Phase1Death.Invoke(radiance, null);
                 radiance.StartCoroutine((IEnumerator)iterator);
-                StartCoroutine(PortalAndInvincibilityWatchdog(radiance));
+
+                try
+                {
+                    StartCoroutine(PortalAndInvincibilityWatchdog(radiance));
+                }
+                catch (Exception e)
+                {
+                    PracticeMod.Instance?.LogError("[3.0 Practice][ResetToPhase1] watchdog failed on attempt " + attempt + ": " + e);
+                }
                 return true;
             }
             catch (Exception e)
             {
-                PracticeMod.Instance?.LogError("ResetToPhase1 failed: " + e);
-                try { LoadBossInLoop(); } catch { }
+                PracticeMod.Instance?.LogError("[3.0 Practice][ResetToPhase1] attempt " + attempt + " of " + MaxResetRetries + " failed: " + e);
                 return false;
             }
         }
 
         private IEnumerator ResetToPhase1(GameObject boss, MonoBehaviour radiance)
         {
-            if (!TryResetToPhase1(boss, radiance)) yield break;
-            yield return null;
+            if (BossRef.Phase1Death == null)
+            {
+                PracticeMod.Critical("AnyRadiance Phase1Death reflection is null; boss is NOT AnyRadiance");
+                LoadBossInLoop();
+                yield break;
+            }
+
+            for (int attempt = 1; attempt <= MaxResetRetries; attempt++)
+            {
+                if (TryResetToPhase1(boss, radiance, attempt))
+                {
+                    yield return null;
+                    yield break;
+                }
+                yield return null;
+            }
+
+            PracticeMod.Critical("All " + MaxResetRetries + " plat-reset attempts failed, falling back to LoadBossInLoop");
+            LoadBossInLoop();
         }
 
         private IEnumerator PortalAndInvincibilityWatchdog(MonoBehaviour radiance)
@@ -471,6 +520,7 @@ namespace Practice_3_0
 
             if (!_reloading && PlayerData.instance != null)
             {
+                PracticeMod.Critical("Boss did not reach phase 2 within 12s of reset; boss may be stuck??? idk");
                 PlayerData.instance.isInvincible = false;
             }
         }
@@ -559,17 +609,6 @@ namespace Practice_3_0
 
             GameObject portals = GameObject.Find("Portals(Clone)");
             if (portals != null) SafeDestroyPortals(portals);
-
-            var attacks = UnityEngine.Object.FindObjectsOfType<GameObject>(true);
-            for (int i = 0; i < attacks.Length; i++)
-            {
-                GameObject a = attacks[i];
-                if (a.name.Contains("Radiant Orb") || a.name.Contains("Radiant Nail") ||
-                    a.name.Contains("Radiant Beam") || a.name.Contains("Beam Orb"))
-                {
-                    a.SetActive(false);
-                }
-            }
 
             GameObject platSets = BossRef.GetGameObject("Plat Sets") ?? GameObject.Find("Plat Sets");
             if (platSets != null)

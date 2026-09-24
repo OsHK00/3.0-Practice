@@ -30,6 +30,8 @@ namespace Practice_3_0
         private static ResetActionSet ResetActions;
         private bool _initialized;
 
+        internal static void Critical(string msg) => Instance?.LogError("[3.0 Practice][CRITICAL] " + msg);
+
         static PracticeMod()
         {
             AddKeyMap(InControl.Key.A, "a");
