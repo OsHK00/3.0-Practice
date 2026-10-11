@@ -173,7 +173,7 @@ namespace Practice_3_0
                 MenuUtils.AddModMenuContent(GetMenuData(), area, lastMenu);
                 KeybindContent.AddKeybind(area, "ResetToPlatsKey", ResetActions.ResetToPlats, new KeybindConfig
                 {
-                    Label = "Reset plats key",
+                    Label = "Reset key",
                 });
             });
             return builder.Build();
@@ -202,7 +202,7 @@ namespace Practice_3_0
                 new IMenuMod.MenuEntry
                 {
                     Name = "Restart from plats on death",
-                    Description = "yeah",
+                    Description = "",
                     Values = new[] { "On", "Off" },
                     Saver = i => Settings.RestartFromPlatsOnDeath = i == 0,
                     Loader = () => Settings.RestartFromPlatsOnDeath ? 0 : 1,
@@ -210,7 +210,7 @@ namespace Practice_3_0
                 new IMenuMod.MenuEntry
                 {
                     Name = "Restart whole fight on death",
-                    Description = "not finished).",
+                    Description = "",
                     Values = new[] { "On", "Off" },
                     Saver = i => Settings.RestartOnDeath = i == 0,
                     Loader = () => Settings.RestartOnDeath ? 0 : 1,
@@ -404,7 +404,6 @@ namespace Practice_3_0
             bool lethal = damage >= PlayerData.instance.health;
             if (!lethal) return damage;
 
-            // Lethal hit in the plats phase, catch it and reset to plats instead of dying
             if (BossPractice.GetCurrentPhase() >= 2 && Settings.RestartFromPlatsOnDeath)
             {
                 BossPractice.Instance.StartCoroutine(BossPractice.Instance.ResetToPlats());
@@ -413,7 +412,8 @@ namespace Practice_3_0
 
             if (Settings.RestartOnDeath)
             {
-                //this would take time, for now just reset to plats
+                BossPractice.ResetWholeFight();
+                return 0;
             }
 
             return damage;

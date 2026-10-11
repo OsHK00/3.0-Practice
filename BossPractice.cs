@@ -157,7 +157,14 @@ namespace Practice_3_0
         private Vector3 _a1PitPos;
         private bool _a1PitPosCached;
         private const int MaxResetRetries = 3;
+        private const int RadianceGraceFrames = 300;
+        private const int MaxReloadRetries = 2;
+        private static readonly Vector3 Phase1PitPos = new Vector3(61.77f, 18.7f, 0f);
+        private static readonly Vector3 PlatsPitPos = new Vector3(61.77f, 30f, 0f);
+        private static int _reloadRetryCount;
         private float _portalCheck;
+        private float _portalRemovedLog;
+        private float _resetKeyCooldown;
         private Vector3 _a1HeroPos;
         private bool _a1HeroFacingRight = true;
         private string _widePlatState;
@@ -190,6 +197,7 @@ namespace Practice_3_0
         {
             ModHooks.SceneChanged -= OnSceneChanged;
             On.BossSceneController.DoDreamReturn -= OnDoDreamReturn;
+            _resetting = false;
         }
 
         private void OnDestroy()
@@ -200,7 +208,11 @@ namespace Practice_3_0
         private static void OnSceneChanged(string targetScene)
         {
             _reloading = false;
-            if (Instance != null) Instance._swordWaiting.Clear();
+            if (Instance != null)
+            {
+                Instance._swordWaiting.Clear();
+                Instance._widePlatState = null;
+            }
             if (targetScene == "GG_Radiance" && Instance != null)
             {
                 Instance.StartCoroutine(Instance.SetupBoss());
@@ -215,7 +227,6 @@ namespace Practice_3_0
 
         private void Update()
         {
-            if (_reloading || _resetting) return;
             if (GameManager.instance == null || GameManager.instance.sceneName != "GG_Radiance") return;
 
             CapturePitFromScene();
@@ -227,17 +238,41 @@ namespace Practice_3_0
                 {
                     _portalCheck = 0.25f;
                     GameObject existing = GameObject.Find("Portals(Clone)");
-                    if (existing != null) SafeDestroyPortals(existing);
+                    if (existing != null)
+                    {
+                        SafeDestroyPortals(existing);
+                        _portalRemovedLog = Time.unscaledTime + 2f;
+                        PracticeMod.Instance?.Log("3.0 Practice: destroyed Portals(Clone)");
+                    }
+                    else if (Time.unscaledTime >= _portalRemovedLog)
+                    {
+                        _portalRemovedLog = Time.unscaledTime + 10f;
+                        PracticeMod.Instance?.LogError("3.0 Practice: Remove portals is on but Portals(Clone) is active (reloading=" + _reloading + ", resetting=" + _resetting + ")");
+                    }
                 }
             }
 
-            if (!string.IsNullOrEmpty(PracticeMod.Settings.ResetToPlatsKey) && GetCurrentPhase() >= 2)
+            if (!_resetting && Time.unscaledTime >= _resetKeyCooldown &&
+                !string.IsNullOrEmpty(PracticeMod.Settings.ResetToPlatsKey) &&
+                Input.GetKeyDown(PracticeMod.Settings.ResetToPlatsKey))
             {
-                if (Input.GetKeyDown(PracticeMod.Settings.ResetToPlatsKey))
+                _resetKeyCooldown = Time.unscaledTime + 1f;
+
+                int phase = GetCurrentPhase();
+                PracticeMod.Instance?.Log("[3.0 Practice][Reset] key pressed (phase=" + phase +
+                    ", reloading=" + _reloading + ", resetting=" + _resetting + ")");
+
+                if (PracticeMod.Settings.RestartFromPlatsOnDeath && phase >= 2)
                 {
                     StartCoroutine(ResetToPlats());
                 }
+                else
+                {
+                    ResetWholeFight();
+                }
             }
+
+            if (_reloading || _resetting) return;
 
             float factor = 1f + 0.5f * PracticeMod.Settings.SwordSpeedMultiplier;
             if (factor <= 1.0001f) return;
@@ -274,11 +309,13 @@ namespace Practice_3_0
 
         private void CapturePitFromScene()
         {
-            // Grab the pit's phase-1 position once (the boss moves it up in phase 3),
-            // so we can put it back down when resetting to plats
-            if (_a1PitPosCached) return;
-            GameObject pit = GameObject.Find("Abyss Pit");
-            if (pit != null && pit.transform.position.y < 29f)
+            GameObject pit = GameObject.Find("Abyss Pit") ?? BossRef.GetGameObject("Abyss Pit");
+            if (pit == null) return;
+
+            float y = pit.transform.position.y;
+            if (_a1PitPosCached && y >= _a1PitPos.y) return;
+
+            if (y < 29f)
             {
                 _a1PitPos = pit.transform.position;
                 _a1PitPosCached = true;
@@ -288,8 +325,6 @@ namespace Practice_3_0
         private IEnumerator SetupBoss()
         {
             CapturePitFromScene();
-            yield return null;
-            yield return null;
 
             if (BossRef.RadianceType == null) yield break;
 
@@ -297,7 +332,7 @@ namespace Practice_3_0
             for (int i = 0; i < 600; i++)
             {
                 GameObject candidate = GameObject.Find("Absolute Radiance");
-                if (candidate != null)
+                if (candidate != null && HeroController.instance != null && candidate.transform.parent != null)
                 {
                     boss = candidate;
                     break;
@@ -306,16 +341,16 @@ namespace Practice_3_0
             }
             if (boss == null)
             {
-                PracticeMod.Critical("Absolute Radiance not found after GG_Radiance load");
+                PracticeMod.Critical("Absolute Radiance scene never became ready (boss/hero/parent missing) after GG_Radiance load");
+                RetryReload();
                 yield break;
             }
 
             MonoBehaviour radiance = boss.GetComponent(BossRef.RadianceType) as MonoBehaviour;
             if (radiance == null)
             {
-                // Give AnyRadiance's own RadianceFinder a moment to apply the mod
                 // before re-adding the component ourselves, to avoid duplicates.
-                for (int grace = 0; grace < 60 && radiance == null; grace++)
+                for (int grace = 0; grace < RadianceGraceFrames && radiance == null; grace++)
                 {
                     radiance = boss.GetComponent(BossRef.RadianceType) as MonoBehaviour;
                     yield return null;
@@ -330,8 +365,17 @@ namespace Practice_3_0
                 if (radiance == null)
                 {
                     PracticeMod.Critical("Could not re-add Radiance component to Absolute Radiance");
+                    RetryReload();
                     yield break;
                 }
+            }
+
+            var all = boss.GetComponents(BossRef.RadianceType);
+            if (all.Length > 1)
+            {
+                PracticeMod.Instance?.LogError("Found " + all.Length + " Radiance components on Absolute Radiance, destroying the duplicates");
+                for (int i = all.Length - 1; i >= 1; i--) Destroy(all[i]);
+                radiance = all[0] as MonoBehaviour;
             }
 
             float waited = 0;
@@ -343,6 +387,8 @@ namespace Practice_3_0
             if (BossRef.GetLogic() == null)
             {
                 PracticeMod.Critical("Radiance logic never started");
+                RetryReload();
+                yield break;
             }
 
             CachePhase1Snapshot();
@@ -400,6 +446,8 @@ namespace Practice_3_0
             CapturePlatsHits();
             PracticeMod.Instance?.Log("[3.0 Practice][Reset] plat reset triggered (phase=" + GetCurrentPhase() + ")");
             yield return ResetToPhase1();
+
+            _resetting = false;
         }
 
         private static void CapturePlatsHits()
@@ -456,6 +504,7 @@ namespace Practice_3_0
 
                 try
                 {
+                    StartCoroutine(KeepVoidDown());
                     StartCoroutine(PortalAndInvincibilityWatchdog(radiance));
                 }
                 catch (Exception e)
@@ -588,24 +637,7 @@ namespace Practice_3_0
                 }
             }
 
-            GameObject pit = GameObject.Find("Abyss Pit");
-            if (pit != null)
-            {
-                // Cancel the tween that dragged the pit up in phase 3, then lower it back
-                iTween.Stop(pit);
-                if (_a1PitPosCached)
-                {
-                    pit.transform.position = _a1PitPos;
-                    PracticeMod.Instance?.Log("3.0 Practice: reset lowered void to " + _a1PitPos);
-                }
-                else
-                {
-                    PracticeMod.Instance?.LogError("3.0 Practice: pit position not cached, void NOT lowered (current y=" + pit.transform.position.y + ")");
-                }
-                // Phase-1 pit is just a hazard, not instant death like in phase 3.
-                DamageHero dh = pit.GetComponentInChildren<DamageHero>();
-                if (dh != null) dh.damageDealt = 2;
-            }
+            PinVoidDown();
 
             GameObject portals = GameObject.Find("Portals(Clone)");
             if (portals != null) SafeDestroyPortals(portals);
@@ -653,6 +685,92 @@ namespace Practice_3_0
 
             GameObject finalHazard = GameObject.Find("Final Hazard Plat");
             if (finalHazard != null) finalHazard.SetActive(false);
+        }
+
+        private void PinVoidDown()
+        {
+            GameObject pit = GameObject.Find("Abyss Pit") ?? BossRef.GetGameObject("Abyss Pit");
+            if (pit == null) return;
+
+            iTween.Stop(pit);
+
+            if (!_a1PitPosCached)
+            {
+                _a1PitPos = Phase1PitPos;
+                _a1PitPosCached = true;
+                PracticeMod.Instance?.LogError("3.0 Practice: pit cache empty, falling back to " + Phase1PitPos);
+            }
+
+            pit.transform.position = _a1PitPos;
+
+            DamageHero dh = pit.GetComponentInChildren<DamageHero>();
+            if (dh != null) dh.damageDealt = 2;
+        }
+
+        private IEnumerator KeepVoidDown()
+        {
+            const float window = 12f;
+            WaitForSeconds tick = new WaitForSeconds(0.25f);
+            float elapsed = 0f;
+            bool logged = false;
+
+            while (!_reloading && elapsed < window)
+            {
+                elapsed += 0.25f;
+                yield return tick;
+
+                if (GetCurrentPhase() >= 2) break;
+
+                PinVoidDown();
+
+                if (!logged)
+                {
+                    logged = true;
+                    GameObject pit = GameObject.Find("Abyss Pit") ?? BossRef.GetGameObject("Abyss Pit");
+                    PracticeMod.Instance?.Log("[3.0 Practice][Reset] void pinned at y=" +
+                        (pit != null ? pit.transform.position.y.ToString() : "?") +
+                        " (target y=" + _a1PitPos.y + ")");
+                }
+            }
+
+            PracticeMod.Instance?.Log("[3.0 Practice][Reset] void pinning finished after " + elapsed + "s (phase=" + GetCurrentPhase() + ")");
+
+            yield return HandVoidBackToGame();
+        }
+
+        private IEnumerator HandVoidBackToGame()
+        {
+            WaitForSeconds tick = new WaitForSeconds(0.25f);
+            float waited = 0f;
+
+            while (!_reloading && GetCurrentPhase() < 2 && waited < 15f)
+            {
+                waited += 0.25f;
+                yield return tick;
+            }
+
+            if (_reloading) yield break;
+
+            byte phase = GetCurrentPhase();
+
+            if (phase >= 3)
+            {
+                PracticeMod.Instance?.Log("[3.0 Practice][Reset] phase " + phase + ", leaving the void to the game");
+                yield break;
+            }
+
+            GameObject pit = GameObject.Find("Abyss Pit") ?? BossRef.GetGameObject("Abyss Pit");
+            if (pit == null) yield break;
+
+            float y = pit.transform.position.y;
+            if (y >= PlatsPitPos.y - 0.01f)
+            {
+                PracticeMod.Instance?.Log("[3.0 Practice][Reset] void already up at y=" + y + ", nothing to hand back");
+                yield break;
+            }
+
+            iTween.MoveTo(pit, new Vector3(PlatsPitPos.x, PlatsPitPos.y, PlatsPitPos.z), 4f);
+            PracticeMod.Instance?.Log("[3.0 Practice][Reset] void handed back to the game (y=" + y + " -> " + PlatsPitPos.y + ", phase=" + phase + ")");
         }
 
         private static void Deactivate(string objectName)
@@ -748,7 +866,7 @@ namespace Practice_3_0
             }
         }
 
-        private void SafeDestroyPortals(GameObject portals)
+        private static void SafeDestroyPortals(GameObject portals)
         {
             // The PortalManagers randomization Timer would keep firing on a destroyed object,
             // so stop/dispose it before deleting the portals
@@ -768,11 +886,40 @@ namespace Practice_3_0
             Destroy(portals);
         }
 
-        internal static void ReloadBoss()
+        internal static void ResetWholeFight(bool userInitiated = true)
         {
             if (Instance == null) return;
+            if (GameManager.instance == null || GameManager.instance.sceneName != "GG_Radiance") return;
+
             _reloading = true;
+            if (userInitiated) _reloadRetryCount = 0;
+            Instance._swordWaiting.Clear();
+            if (PracticeMod.Settings.ResetCarefreeOnPlatReset) CarefreeInjection.SetMax();
             Instance.StartCoroutine(ReloadSequence());
+            Instance.StartCoroutine(ClearStuckReloadFlag());
+        }
+
+        private static IEnumerator ClearStuckReloadFlag()
+        {
+            yield return new WaitForSeconds(10f);
+            if (!_reloading) yield break;
+
+            PracticeMod.Critical("Reload did not complete within 10s, force-clearing the reload flag");
+            _reloading = false;
+        }
+
+        private static void RetryReload()
+        {
+            if (_reloadRetryCount >= MaxReloadRetries)
+            {
+                PracticeMod.Critical("Boss setup failed " + _reloadRetryCount + " times, giving up on reloading");
+                _reloading = false;
+                return;
+            }
+
+            _reloadRetryCount++;
+            PracticeMod.Instance?.Log("[3.0 Practice][Reset] boss setup failed, reloading the scene (retry " + _reloadRetryCount + "/" + MaxReloadRetries + ")");
+            ResetWholeFight(false);
         }
 
         private static IEnumerator ReloadSequence()
@@ -786,6 +933,7 @@ namespace Practice_3_0
             if (GameManager.instance == null) return;
 
             string sceneToLoad = GameManager.instance.GetSceneNameString();
+            if (sceneToLoad != "GG_Radiance") return;
             _reloading = true;
 
             if (sceneToLoad == "GG_Radiance")
@@ -814,6 +962,8 @@ namespace Practice_3_0
 
             GameManager gm = GameManager.instance;
             HeroController hc = HeroController.instance;
+
+            CleanLeftoversBeforeReload();
 
             PlayerData.instance.dreamReturnScene = "GG_Workshop";
             PlayMakerFSM.BroadcastEvent("BOX DOWN DREAM");
@@ -860,6 +1010,27 @@ namespace Practice_3_0
             });
 
             if (Instance != null) Instance.StartCoroutine(FixSoul(bossLevel));
+        }
+
+        private static void CleanLeftoversBeforeReload()
+        {
+            PlayerData.instance.isInvincible = false;
+
+            GameObject portals = GameObject.Find("Portals(Clone)");
+            if (portals != null) SafeDestroyPortals(portals);
+
+            if (BossRef.RadianceType == null) return;
+
+            var bosses = Resources.FindObjectsOfTypeAll<GameObject>();
+            for (int i = 0; i < bosses.Length; i++)
+            {
+                GameObject go = bosses[i];
+                if (go == null || go.name != "Absolute Radiance") continue;
+
+                var comps = go.GetComponents(BossRef.RadianceType);
+                for (int c = comps.Length - 1; c >= 0; c--) Destroy(comps[c]);
+                Destroy(go);
+            }
         }
 
         private static IEnumerator FixSoul(int bossLevel)
