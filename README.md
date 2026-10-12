@@ -4,7 +4,7 @@ A small mod for that adds practice tools for practice anyrad3.0
 
 ## Features
 
-- Reset the boss at dying
+- Reset the boss at dying (under review)
 - Bind key for resets
 - Restart plats
 - Option to remove phase-2 portals
@@ -16,7 +16,6 @@ A small mod for that adds practice tools for practice anyrad3.0
 ## Requirements
 
 - Any Radiance 3.0
-- SFCore
 
 ## Build
 
